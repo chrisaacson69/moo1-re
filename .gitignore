@@ -1,0 +1,14 @@
+# Third-party references — fetched by tools/fetch_refs.py, never committed
+refs/
+# Per-machine config (game install path)
+config.toml
+__pycache__/
+*.pyc
+# Never commit original game files
+*.EXE
+*.exe
+*.LBX
+*.lbx
+# Saves only as curated fixtures
+*.GAM
+!fixtures/*.GAM
