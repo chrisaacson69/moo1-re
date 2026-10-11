@@ -44,7 +44,7 @@ py -3 -m unittest discover -s tests -v
   with **values identical to 1oom**. Unmatched indices are the all-zero NONE records or low-entropy
   windows skipped by the guard — inspected by hand (specials 1/3), they match too. The original
   *layouts* differ from 1oom's structs: weapons 48 B/record vs 1oom's packing (one extra word before
-  cost), computers 30 B (one field 1oom lacks), specials 50 B (name+description near pointers first,
+  cost), computers 30 B (= 1oom's 14 fields + trailing name pointer), specials 50 B (name+description near pointers first,
   one field relocated), hulls 18 B = `cost, space, hits, ?6, index×6, power, defense, 0, name_ptr`.
   `tbl_monster` and `tbl_startship` are ABSENT — expected: 1oom's monster table is a derived
   ("parsed") battle form, start ships are built from enums/names.
@@ -53,7 +53,9 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
 
 ## Next
 
-- Monsters/Guardian: find the original layout (Guardian HP 2,000…10,000 by difficulty is the anchor).
+- Monsters/Guardian: neither 1oom's HP progression (2,000…10,000) nor the OSG's (6,000…10,000) is stored as a
+  constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
+  LBX-held; needs code or a runtime read on known difficulties.
 - Resolve `ai_p3_tbl_w` against STARMAP.EXE code.
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).
