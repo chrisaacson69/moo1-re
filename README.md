@@ -20,8 +20,11 @@ py -3 -m unittest discover -s tests -v
 | `tools/table_sweep.py` | Runs that check over **every** hard-coded integer table in 1oom → `notes/table-sweep.md` (generated; regenerate, don't edit). |
 | `tools/struct_sweep.py` | Same for 1oom's **struct** tables (ship tech, monsters, start ships): enums/`#define`s resolved from 1oom's headers, records located by constant **stride**, sliding-window fallback when the original layout differs → `notes/struct-sweep.md` (generated). |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
+| `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
 ## Findings so far
+
+- **The static↔runtime address join is solved by formula** (live, 2026-10-16): root `linear = (PSP+0x10)×16 + file_off − header`. Both EXEs pass: 2990/2991 + 1899/1900 relocations, 31/31 verified tables. FBOV overlays load at `seg:0000`, so a runtime offset is the in-overlay offset (zappatic's fleet-count `inc` = overlay #71+0x1839, observed). See `notes/dos-address-join.md`.
 
 - Save = 59,036 B; zappatic's layout is 22 B short (end/winner/election tail at 0xE686–0xE69B).
 - Stored year = shown year − 2299.
