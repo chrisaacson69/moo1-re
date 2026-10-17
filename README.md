@@ -21,6 +21,8 @@ py -3 -m unittest discover -s tests -v
 | `tools/struct_sweep.py` | Same for 1oom's **struct** tables (ship tech, monsters, start ships): enums/`#define`s resolved from 1oom's headers, records located by constant **stride**, sliding-window fallback when the original layout differs → `notes/struct-sweep.md` (generated). |
 | `tools/disasm.py <exe> <root|N> <off> [n]` | Capstone 16-bit disassembly by module offset (root image or overlay N); `--grep` operand search. STARMAP DGROUP = image seg 0x326B. |
 | `tools/reko_run.py <EXE>` | Runs the [Reko](https://github.com/uxmal/reko) decompiler (CLI 0.12.5; path in `config.toml`) on the root module, auto-skipping procedures that abort Reko's global data-flow pass → typed C in `work/reko/` (gitignored). STARMAP: 593 procedures, all typed, 2 skipped. Trust its control flow/constants, not its types. Root only — overlays not loaded yet. |
+| `tools/deoverlay.py <EXE>` | Rewrites a Borland FBOV executable as one statically linked MZ: overlays at fixed segments above DGROUP, fixups → MZ relocations, `INT 3Fh` stub entries → `JMP FAR`. Validated: 5,703/5,703 fixup words are root segments, 394/394 entries land on `push bp; mov bp,sp`, root changed only inside entries. For analysis only. |
+| `tools/reko_overlays.py <EXE>` | Reko per overlay (raw blob at its de-overlay segment, fixups for Reko's base 0800, so root calls keep the root run's addresses) → `work/reko/overlays/`. STARMAP: 25/25 overlays, 394 typed procedures, 0 global aborts. |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
 | `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
@@ -60,6 +62,13 @@ py -3 -m unittest discover -s tests -v
   Its C for the AI-weights routine (`fn1B75_000B`) matches 1oom's structure line for line and again
   shows eco read from column 3 — a third independent reading (bytes → Capstone → Reko).
 
+- **All of STARMAP now decompiles (2026-10-17): 593 root + 394 overlay = 987 typed procedures.**
+  Reko on the whole de-overlayed EXE aborts globally (an unattributable duplicate-key error in
+  projection propagation); per-overlay runs avoid it. In Borland's overlay model every overlay
+  function is a far function with its own stub entry, so per-overlay procedures = entries (verified).
+  First read from overlay code: the fleet-creation routine (`ovl71_1626`) guards on
+  `wCC86 < 0x104` — the **260 fleets-en-route cap**, in the original's own code.
+
 Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gaming/moo1/`).
 
 ## Next
@@ -68,7 +77,6 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
   constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
   LBX-held; needs code or a runtime read on known difficulties.
 - What do the AI table's extra columns (4, 11–14) drive?
-- Overlay splitter → feed the 25 FBOV overlays to Reko (needs fixups resolved against the root).
 - Function map: pair Reko's 593 root procedures (+ overlays) with 1oom functions → coverage %.
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).

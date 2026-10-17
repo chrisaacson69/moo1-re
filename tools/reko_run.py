@@ -5,12 +5,14 @@ Why the skip loop: on STARMAP.EXE, Reko 0.12.5 aborts *global* analysis on a sin
 ("Boundless recursion in fnXXXX_YYYY while finding definitions of ss"), which leaves every procedure
 untyped. Marking that procedure `decompile=false` lets the rest complete. Skipped procedures are
 listed in work/reko/<EXE>/skipped.txt — they are exactly the ones to read by hand (tools/disasm.py).
-Reko covers the ROOT module only: Borland FBOV overlays are not loaded (overlay splitter: TODO).
+Reko loads only the ROOT module of an FBOV program; for overlays, run tools/deoverlay.py first and
+pass --input work/deoverlay/<EXE> --tag=-full.
 Reko's addresses: root loaded at segment 0800, so Reko seg:off = 0800 + image offset (dos_addr.py).
 Trust Reko's control flow and constants; NOT its types (it writes 16-bit stores as `char`).
 
 Config: `reko = '<path to decompile.exe>'` in config.toml.
 Usage:  py -3 tools/reko_run.py STARMAP.EXE [--rounds 10]
+        py -3 tools/reko_run.py STARMAP.EXE --input work/deoverlay/STARMAP.EXE --tag=-full
 """
 import argparse, re, shutil, subprocess, tomllib
 from common import ROOT, game_dir
@@ -38,11 +40,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("exe")
     ap.add_argument("--rounds", type=int, default=10)
+    ap.add_argument("--input", help="analyse this file instead of the game's EXE "
+                    "(e.g. work/deoverlay/STARMAP.EXE from tools/deoverlay.py)")
+    ap.add_argument("--tag", default="", help="output subfolder suffix, e.g. -full")
     a = ap.parse_args()
     reko = tomllib.loads((ROOT / "config.toml").read_text())["reko"]
-    out = ROOT / "work" / "reko" / a.exe
+    out = ROOT / "work" / "reko" / (a.exe + a.tag)
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copy(game_dir() / a.exe, out / a.exe)
+    shutil.copy((ROOT / a.input) if a.input else game_dir() / a.exe, out / a.exe)
     skip = list(SEED_SKIP.get(a.exe, []))
     for rnd in range(a.rounds):
         (out / "project.dcproject").write_text(project(a.exe, skip), encoding="utf8")
