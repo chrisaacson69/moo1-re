@@ -19,6 +19,7 @@ py -3 -m unittest discover -s tests -v
 | `tools/exe_find.py <1oom file> <symbol>` | Parses a static table from 1oom's C source and byte-searches `ORION.EXE`/`STARMAP.EXE` (int8/16, signed/unsigned). A full match = 1oom's table is the original's. |
 | `tools/table_sweep.py` | Runs that check over **every** hard-coded integer table in 1oom → `notes/table-sweep.md` (generated; regenerate, don't edit). |
 | `tools/struct_sweep.py` | Same for 1oom's **struct** tables (ship tech, monsters, start ships): enums/`#define`s resolved from 1oom's headers, records located by constant **stride**, sliding-window fallback when the original layout differs → `notes/struct-sweep.md` (generated). |
+| `tools/disasm.py <exe> <root|N> <off> [n]` | Capstone 16-bit disassembly by module offset (root image or overlay N); `--grep` operand search. STARMAP DGROUP = image seg 0x326B. |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
 | `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
@@ -37,10 +38,10 @@ py -3 -m unittest discover -s tests -v
   New-game data lives in `ORION.EXE`; AI/tech/battle/diplomacy tables in `STARMAP.EXE`. Most C
   `uint8_t`/`int` tables are stored as **16-bit words** in the original. The single NEAR hit
   (`colortbls_sd`) is a lookalike: 1oom zero-pads past the original's end (EXE continues `NONE NUC…`).
-  ABSENT (16) are almost all 1oom UI layout. The one game-logic ABSENT, `ai_p3_tbl_w` (AI slider
-  weights), is probably inline constants in the original — and 1oom reads column [2] for the eco
-  weight (`game_ai_classic.c:1888`) and swaps prop/planetology columns (`:2016-2017`): faithful
-  quirk or 1oom slip? **Needs the disassembly.**
+  ABSENT (16) are almost all 1oom UI layout. The one game-logic ABSENT, `ai_p3_tbl_w`, is a real
+  table in v1.3 with **15-word rows** (6 columns 1oom drops) — resolved by disassembly:
+  **1oom's eco weight reads the wrong column** (an unflagged 1oom bug that inverts the Ecologist
+  personality); the prop/plan order is faithful. See `notes/ai-slider-weights.md`.
 
 - **Ship-tech data is binary-verified (struct sweep):** weapons (64/64), computers, engines (9/9),
   armor (14/14), shields, jammers, specials and hulls (4/4) all sit in `STARMAP.EXE` `0x36D36–0x3856E`
@@ -59,6 +60,6 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
 - Monsters/Guardian: neither 1oom's HP progression (2,000…10,000) nor the OSG's (6,000…10,000) is stored as a
   constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
   LBX-held; needs code or a runtime read on known difficulties.
-- Resolve `ai_p3_tbl_w` against STARMAP.EXE code.
+- What do the AI table's extra columns (4, 11–14) drive?
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).
