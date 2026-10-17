@@ -23,6 +23,7 @@ py -3 -m unittest discover -s tests -v
 | `tools/reko_run.py <EXE>` | Runs the [Reko](https://github.com/uxmal/reko) decompiler (CLI 0.12.5; path in `config.toml`) on the root module, auto-skipping procedures that abort Reko's global data-flow pass → typed C in `work/reko/` (gitignored). STARMAP: 593 procedures, all typed, 2 skipped. Trust its control flow/constants, not its types. Root only — overlays not loaded yet. |
 | `tools/deoverlay.py <EXE>` | Rewrites a Borland FBOV executable as one statically linked MZ: overlays at fixed segments above DGROUP, fixups → MZ relocations, `INT 3Fh` stub entries → `JMP FAR`. Validated: 5,703/5,703 fixup words are root segments, 394/394 entries land on `push bp; mov bp,sp`, root changed only inside entries. For analysis only. |
 | `tools/reko_overlays.py <EXE>` | Reko per overlay (raw blob at its de-overlay segment, fixups for Reko's base 0800, so root calls keep the root run's addresses) → `work/reko/overlays/`. STARMAP: 25/25 overlays, 394 typed procedures, 0 global aborts. |
+| `tools/coverage_map.py <EXE>` | Pairs every Reko procedure with a 1oom function: IDF-weighted shared constants + 1oom field accesses translated to binary offsets (from 1oom's save loader) + array strides, then call-graph propagation. Tiers CONFIDENT/PROPAGATED/WEAK/UNMATCHED; reports anchors, duplicate claims and an overlay-coherence precision proxy with a permutation baseline → `notes/coverage-map.md` (generated). |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
 | `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
@@ -69,6 +70,12 @@ py -3 -m unittest discover -s tests -v
   First read from overlay code: the fleet-creation routine (`ovl71_1626`) guards on
   `wCC86 < 0x104` — the **260 fleets-en-route cap**, in the original's own code.
 
+- **Coverage map v1 (2026-10-17):** 121/987 STARMAP procedures paired confidently (81 by constants,
+  40 by call-graph propagation), 443 weak, 423 unmatched. Precision proxy: overlay coherence **0.57**
+  vs **0.28** for shuffled pairs (max 0.36 in 500). Both hand-verified anchors pair correctly; the
+  fleet routine stays WEAK because 1oom has a near-twin (`game_turn_fleet_send`). A proposal layer —
+  it says where to compare, not that 1oom is right.
+
 Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gaming/moo1/`).
 
 ## Next
@@ -77,6 +84,6 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
   constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
   LBX-held; needs code or a runtime read on known difficulties.
 - What do the AI table's extra columns (4, 11–14) drive?
-- Function map: pair Reko's 593 root procedures (+ overlays) with 1oom functions → coverage %.
+- Coverage map v2: string references (DGROUP strings ↔ 1oom `game_str_*`) as a third signal; classify the unmatched (Borland RTL / LBX / graphics vs game logic).
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).
