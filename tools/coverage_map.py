@@ -9,6 +9,9 @@ Two independent signals, then propagation:
     DS address in STARMAP (players at DS:0x786E: `e->treaty` -> 0x7946).
  Bags are restricted to the SHARED vocabulary (constants seen on both sides) and IDF-weighted; score =
  cosine. CONFIDENT = score >= MIN_SCORE and >= MARGIN x runner-up; WEAK = score only.
+ 2b. STRINGS — binary constants that are DS offsets of a string start in DGROUP become that string's
+    normalised text; 1oom functions contribute the texts of the game_str_* symbols (and literals) they
+    use. Text is the original's own English, so a shared string is strong identity evidence.
  3. CALL GRAPH — for each confident pair (b, f), b's unmatched callees are matched among f's callees
     (PROPAGATED, if the best clears PROP_MIN and the margin); iterated to a fixed point.
 
@@ -28,6 +31,61 @@ STRIDES = {r"->\s*planet\s*\[": 0xB8, r"->\s*eto\s*\[": 0xDD4, r"->\s*enroute\s*
            r"->\s*transport\s*\[": 0x12, r"->\s*srd\s*\[": 0x468}
 IGNORE = set(range(0, 3))                           # 0/1/2 carry no identity
 PLAYERS_DS = {"STARMAP.EXE": 0x786E}                # derived 2026-10-17 (notes/ai-slider-weights.md)
+DGROUP_SEG = {"STARMAP.EXE": 0x326B}                # image segment of DS (table voting, 2026-10-17)
+STR_C = re.compile(r'"((?:[^"\\]|\\.)*)"')          # a C string literal's contents
+DSMEMBER = re.compile(r"\bds->(?:w|dw|b|t|a|ptr|seg|u)([0-9A-F]{4})\b")   # Reko's DS global naming
+
+
+def norm_text(t):
+    """Case/spacing/punctuation-insensitive text key; None if too short to carry identity."""
+    k = re.sub(r"[^a-z0-9]+", " ", re.sub(r"\\.", " ", t).lower()).strip()
+    return k if len(k) >= 4 and sum(ch.isalpha() for ch in k) >= 3 else None
+
+
+def dgroup_strings(exe):
+    """DS offset -> [normalised texts]: every NUL-terminated printable string START in DGROUP, plus every
+    near-pointer table of such strings (its base offset -> all its texts)."""
+    import dos_addr
+    e = dos_addr.Exe(exe)
+    b, base = e.data, e.hdr + DGROUP_SEG[exe] * 16
+    lim, out = min(0x10000, len(b) - base), {}
+    for c in range(1, lim):
+        if b[base + c - 1] != 0:
+            continue
+        j = c
+        while j < lim and 0x20 <= b[base + j] < 0x7F:
+            j += 1
+        if j < lim and b[base + j] == 0 and (k := norm_text(b[base + c:base + j].decode("latin1"))):
+            out[c] = [k]
+    # pointer tables: runs of >= 2 consecutive DS words that are each a string start. Code references
+    # the table, not the strings (1oom's game_str_tbl_* arrays are the same idea), so the table's base
+    # offset stands for all its texts.
+    starts = set(out)
+    c = 0
+    while c + 4 <= lim:
+        run = []
+        while c + 2 <= lim and (w := int.from_bytes(b[base + c:base + c + 2], "little")) in starts:
+            run.append(w); c += 2
+        if len(run) >= 2:
+            tbl = c - 2 * len(run)
+            out.setdefault(tbl, [])
+            out[tbl] = out[tbl] + [t for w in run for t in out[w] if isinstance(t, str)]
+        c += 2 if not run else 0
+    return out
+
+
+def oneoom_strings():
+    """game_str_* symbol -> [normalised texts], from 1oom's string tables (originals' English text)."""
+    out = collections.defaultdict(list)
+    for f in (ONEOOM / "src/game").glob("game_str*.c"):
+        s = struct_sweep.strip_comments(f.read_text(encoding="latin1"))
+        for m in re.finditer(r"\b(game_str_\w+)\s*(?:\[[^\]]*\])*\s*=\s*", s):
+            i = m.end()
+            j = s.find(";", i)
+            for t in STR_C.findall(s[i:j]):
+                if (k := norm_text(t)):
+                    out[m.group(1)].append(k)
+    return out
 ANCHORS = {"fn1B75_000B": "game_ai_classic_turn_p3",   # disassembly, notes/ai-slider-weights.md
            "ovl71_1626": "game_send_fleet_do"}           # 260-cap check (0x104) + 1oom game_fleet.c:64
 SRC_DIRS = ["src/game", "src/ui/classic"]
@@ -48,12 +106,28 @@ def field_map(players_ds):
     return fm
 
 
-def lits(text, sym=None, fields=None):
+def lits(text, sym=None, fields=None, dstrings=None, gstrings=None):
     out = collections.Counter()
     for m in NUM.finditer(text):
         v = num(m.group(1))
         if v not in IGNORE and v < 0x10000:
             out[v] += 1
+            if dstrings and v in dstrings:         # binary: a DS offset that starts a string / pointer table
+                for k in dstrings[v]:
+                    out[("s", k)] += 1
+    if dstrings is not None:                       # binary: Reko names DS globals `ds->w7946`, `ds->ptrCB72`…
+        for t in DSMEMBER.findall(text):
+            v = int(t, 16)
+            out[v] += 1
+            for k in dstrings.get(v, ()):
+                out[("s", k)] += 1
+    if gstrings is not None:                       # 1oom: named strings + literal strings
+        for name in re.findall(r"\b(game_str_\w+)", text):
+            for k in gstrings.get(name, ()):
+                out[("s", k)] += 1
+        for t in STR_C.findall(text):
+            if (k := norm_text(t)):
+                out[("s", k)] += 1
     if sym:
         for name in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", text):
             v = sym.get(name)
@@ -71,7 +145,7 @@ def lits(text, sym=None, fields=None):
 
 
 def binary_procs(exe):
-    procs = {}
+    procs, ds = {}, dgroup_strings(exe)
     files = list((ROOT / "work" / "reko" / exe).rglob("*.c")) + \
         list((ROOT / "work" / "reko" / "overlays" / exe).rglob("*.c"))
     for f in files:
@@ -84,11 +158,11 @@ def binary_procs(exe):
             body = re.sub(r"^//.*$", "", body, flags=re.M)
             calls = set(re.findall(r"\b((?:fn[0-9A-F]{4}_[0-9A-F]{4})|ovl\d+_[0-9A-F]{4})\(", body)) - {name}
             region = f.parent.parent.name if "overlays" in f.parts else "root"
-            procs[name] = dict(addr=h.group(1), region=region, consts=lits(body), calls=calls)
+            procs[name] = dict(addr=h.group(1), region=region, consts=lits(body, dstrings=ds), calls=calls)
     return procs
 
 
-def oneoom_funcs(sym, fields):
+def oneoom_funcs(sym, fields, gstrings):
     funcs = {}
     fdef = re.compile(r"^(?:static\s+)?(?:inline\s+)?[A-Za-z_][\w\s\*]*?\b([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\{", re.M)
     for d in SRC_DIRS:
@@ -104,7 +178,7 @@ def oneoom_funcs(sym, fields):
                         break
                 body = s[i:j + 1]
                 funcs[m.group(1)] = dict(file=f"{d}/{f.name}:{s.count(chr(10), 0, m.start()) + 1}",
-                                         consts=lits(body, sym, fields), body=body)
+                                         consts=lits(body, sym, fields, gstrings=gstrings), body=body)
     names = set(funcs)
     for v in funcs.values():
         v["calls"] = set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", v.pop("body"))) & names
@@ -116,7 +190,7 @@ def main():
     ap.add_argument("exe")
     a = ap.parse_args()
     sym, fields = struct_sweep.symbols(), field_map(PLAYERS_DS[a.exe])
-    B, F = binary_procs(a.exe), oneoom_funcs(sym, fields)
+    B, F = binary_procs(a.exe), oneoom_funcs(sym, fields, oneoom_strings())
     shared = set().union(*(v["consts"] for v in B.values())) & set().union(*(v["consts"] for v in F.values()))
     for side in (B, F):
         for v in side.values():
@@ -181,6 +255,8 @@ def main():
     (ROOT / "work" / "coverage").mkdir(parents=True, exist_ok=True)
     (ROOT / "work" / "coverage" / f"{a.exe}.json").write_text(json.dumps(rows, indent=1))
     good = tiers["CONFIDENT"] + tiers["PROPAGATED"]
+    with_str = sum(any(isinstance(k, tuple) for k in v["consts"]) for v in B.values())
+    nstr = len({k for k in shared if isinstance(k, tuple)})
     # precision proxy: overlays are compile units, so real pairs inside one overlay cluster in few 1oom files
     def coh(pairs):
         per = collections.defaultdict(collections.Counter)
@@ -201,6 +277,7 @@ def main():
            f"- Binary procedures: **{len(B)}** (Reko root + overlays). 1oom functions: {len(F)} ({len(game_funcs)} in `src/game`).",
            f"- **Paired {good}/{len(B)} ({100 * good / len(B):.0f}%)**: CONFIDENT {tiers['CONFIDENT']} + PROPAGATED "
            f"{tiers['PROPAGATED']}; WEAK {tiers['WEAK']}; UNMATCHED {tiers['UNMATCHED']}.",
+           f"- String evidence: {nstr} shared string texts; {with_str}/{len(B)} binary procedures reference at least one.",
            f"- **Precision proxy — overlay coherence {coherence:.2f}**: mean share of an overlay's pairs that fall in its "
            f"single most common 1oom source file ({nmulti} overlays with ≥3 pairs) vs **{sum(base) / len(base):.2f}** for "
            f"500 shuffles of the same pairs (max {base[-1]:.2f}).",
@@ -214,7 +291,7 @@ def main():
     out += ["", "## 1oom functions claimed more than once", "", ", ".join(f"`{f}`×{k}" for f, k in sorted(dup.items())),
             "", "## 1oom `src/game` functions without a paired binary procedure", "", ", ".join(f"`{f}`" for f in unclaimed)]
     (ROOT / "notes" / "coverage-map.md").write_text("\n".join(out) + "\n", encoding="utf8")
-    print(dict(tiers), f"paired {good}/{len(B)}", "anchors:", anchors, "dups:", len(dup), "unclaimed:", len(unclaimed), f"coherence {coherence:.2f}")
+    print(dict(tiers), f"paired {good}/{len(B)}", "anchors:", anchors, "strings:", nstr, with_str, "dups:", len(dup), "unclaimed:", len(unclaimed), f"coherence {coherence:.2f}")
 
 
 if __name__ == "__main__":

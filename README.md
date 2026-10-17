@@ -75,6 +75,13 @@ py -3 -m unittest discover -s tests -v
   vs **0.28** for shuffled pairs (max 0.36 in 500). Both hand-verified anchors pair correctly; the
   fleet routine stays WEAK because 1oom has a near-twin (`game_turn_fleet_send`). A proposal layer —
   it says where to compare, not that 1oom is right.
+- **Coverage map v2 — strings + Reko DS members (2026-10-17): 139/987 paired** (98 confident + 41
+  propagated), coherence 0.53 vs 0.28 shuffled. 688 of 1oom's 1,007 `game_str` texts exist verbatim in
+  STARMAP's DGROUP; 410 of its 977 strings are reached only through near-pointer tables (resolved: the
+  table base stands for its texts, like 1oom's `game_str_tbl_*`). Reko names DS globals `ds->w7946`, so
+  those offsets are now extracted too. Limit, measured by tracing samples: many strings (e.g. the
+  diplomacy "you propose a trade agreement") are never referenced by a constant — reached via computed
+  offsets — so only 91 procedures carry string evidence. Next lever would be data-flow, not more regex.
 
 Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gaming/moo1/`).
 
@@ -84,6 +91,6 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
   constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
   LBX-held; needs code or a runtime read on known difficulties.
 - What do the AI table's extra columns (4, 11–14) drive?
-- Coverage map v2: string references (DGROUP strings ↔ 1oom `game_str_*`) as a third signal; classify the unmatched (Borland RTL / LBX / graphics vs game logic).
+- Classify the ~424 unmatched (Borland RTL / LBX / graphics vs game logic); computed string references need data-flow.
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).
