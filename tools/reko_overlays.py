@@ -13,7 +13,7 @@ Usage:  py -3 tools/reko_overlays.py STARMAP.EXE [--only 71,74]
 """
 import argparse, json, re, struct, subprocess, tomllib
 from common import ROOT
-import dos_addr
+import dos_addr, deoverlay
 
 REKO_BASE = 0x0800
 
@@ -55,10 +55,7 @@ def main():
         name = f"ovl{o['idx']}"
         out = base / name
         out.mkdir(parents=True, exist_ok=True)
-        code = bytearray(exe.data[o["file"]:o["file"] + o["size"]])
-        fx = exe.data[o["file"] + o["size"]:o["file"] + o["size"] + o["fixups"]]
-        for (f,) in struct.iter_unpack("<H", fx):
-            struct.pack_into("<H", code, f, (struct.unpack_from("<H", code, f)[0] + REKO_BASE) & 0xFFFF)
+        code, _ = deoverlay.fixed_overlay_code(exe, o, REKO_BASE)   # index x 8 -> image seg + Reko base
         (out / f"{name}.bin").write_bytes(code)
         seg = int(omap[o["idx"]]["new_seg"], 16) + REKO_BASE
         entries = [int(e["target"], 16) for e in omap[o["idx"]]["entries"]]

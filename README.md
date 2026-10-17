@@ -24,6 +24,7 @@ py -3 -m unittest discover -s tests -v
 | `tools/deoverlay.py <EXE>` | Rewrites a Borland FBOV executable as one statically linked MZ: overlays at fixed segments above DGROUP, fixups → MZ relocations, `INT 3Fh` stub entries → `JMP FAR`. Validated: 5,703/5,703 fixup words are root segments, 394/394 entries land on `push bp; mov bp,sp`, root changed only inside entries. For analysis only. |
 | `tools/reko_overlays.py <EXE>` | Reko per overlay (raw blob at its de-overlay segment, fixups for Reko's base 0800, so root calls keep the root run's addresses) → `work/reko/overlays/`. STARMAP: 25/25 overlays, 394 typed procedures, 0 global aborts. |
 | `tools/coverage_map.py <EXE>` | Pairs every Reko procedure with a 1oom function: IDF-weighted shared constants + 1oom field accesses translated to binary offsets (from 1oom's save loader) + array strides, then call-graph propagation. Tiers CONFIDENT/PROPAGATED/WEAK/UNMATCHED; reports anchors, duplicate claims and an overlay-coherence precision proxy with a permutation baseline → `notes/coverage-map.md` (generated). |
+| `tools/module_map.py <EXE>` | Splits the EXE into its **76 code modules** from the linker's FBOV segment table, builds the module call graph, layers it bottom-up (level 0 = calls nothing), fingerprints hardware/DOS use (Capstone: INT 21h/10h/33h/16h, VGA ports, A000) and proposes a class (LIB/HW, GAME, UI, MIXED, OVL-STUBS) → `notes/module-map.md` (generated). |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
 | `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
@@ -82,6 +83,20 @@ py -3 -m unittest discover -s tests -v
   those offsets are now extracted too. Limit, measured by tracing samples: many strings (e.g. the
   diplomacy "you propose a trade agreement") are never referenced by a constant — reached via computed
   offsets — so only 91 procedures carry string evidence. Next lever would be data-flow, not more regex.
+
+- **Overlay fixups are segment-table index × 8, not image segments — corrected 2026-10-17.**
+  Found when the RNG showed up at two addresses (`1E55:00DD` from root, `0100:00DD` from overlays).
+  Over all 5,656 overlay far calls the index reading lands on 4,449 prologues + 599 stub entries +
+  608 in-bounds asm helpers (0 invalid); the image-segment reading, 815 prologues. Fixed in
+  `deoverlay.fixed_overlay_code` (shared by both tools), with a regression test. The earlier
+  "all fixup words < 0x4155" validation was a range check, not a semantic one — it let this through.
+  Overlay-internal findings (260 cap) and root findings (AI weights) were unaffected.
+- **Module map (2026-10-17): 76 code modules, layered 0–8.** Level 0 is the libraries: `seg0000`
+  Borland RTL (95 procs, 62× INT 21h, called from 46 modules), a planar-VGA graphics family
+  (`seg1ABB`–`seg24C5`, `seg1F87`: sequencer/GC ports + A000), `seg253E` mouse/keyboard (INT 33h/16h),
+  small INT 21h file-I/O modules. Levels 6–8 are the turn engine (`seg0924` game_turn, `seg0468`,
+  `seg1155` battle; `seg0DF4` on top). Overlays do essentially no port I/O. Coverage by class:
+  GAME 23%, UI 25%, MIXED 15%, LIB/HW 4% (expected — 1oom rewrote that layer), stubs 0%.
 
 Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gaming/moo1/`).
 

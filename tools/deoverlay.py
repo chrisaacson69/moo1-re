@@ -5,8 +5,9 @@ invisible to them. This rewrites the EXE so every overlay is resident at a fixed
 
   * each overlay's code is placed, paragraph-aligned, ABOVE the root's DGROUP span (so overlay code
     never aliases data addresses: STARMAP's DGROUP runs to image linear 0x426AF, past the image end)
-  * each overlay's fixup block (u16 offsets of words holding root segment numbers) becomes MZ
-    relocations — the loader adds the load segment to them exactly as VROOMM would
+  * each overlay's fixup block (u16 offsets of words holding a segment-table INDEX x 8 — not an image
+    segment; see fixed_overlay_code) is translated through the FBOV segment table and becomes MZ
+    relocations — the loader then adds the load segment, as VROOMM would
   * each stub entry `CD 3F <u16 off> 00` (INT 3Fh = "load overlay and jump") becomes
     `EA <off> <seg>` (JMP FAR) to the overlay's new segment, plus a relocation for <seg>
 
@@ -24,6 +25,36 @@ import dos_addr
 ENTRY0, ENTRY_LEN = 0x20, 5
 
 
+def segment_table(exe):
+    """The FBOV segment table: image segment of every linker segment, in table order."""
+    _s, segtbl, nseg = struct.unpack_from("<III", exe.data, exe.end + 4)
+    return [struct.unpack_from("<H", exe.data, segtbl + 8 * i)[0] for i in range(nseg)]
+
+
+def fixed_overlay_code(exe, o, base):
+    """Overlay `o`'s code with every fixup applied for a load segment of `base`.
+
+    A fixup word in overlay code is NOT an image segment: it is a segment-table INDEX x 8
+    (selector-like). Verified 2026-10-17 over all 5,656 overlay far calls: index reading lands on
+    4,449 prologues + 599 overlay stub entries + 608 in-bounds starts (asm RTL/graphics helpers,
+    e.g. 0000:05FE, the root's own most-called routine), 0 invalid; reading the word as an image
+    segment lands on 815 prologues. Raises on any word that is not a valid index.
+    """
+    st = segment_table(exe)
+    code = bytearray(exe.data[o["file"]:o["file"] + o["size"]])
+    fx = exe.data[o["file"] + o["size"]:o["file"] + o["size"] + o["fixups"]]
+    sites = []
+    for (f,) in struct.iter_unpack("<H", fx):
+        if f + 2 > len(code):
+            raise SystemExit(f"overlay {o['idx']}: fixup {f:#x} outside code ({len(code):#x})")
+        w = struct.unpack_from("<H", code, f)[0]
+        if w % 8 or w // 8 >= len(st):
+            raise SystemExit(f"overlay {o['idx']}: fixup word {w:#x} at {f:#x} is not a segment-table index")
+        struct.pack_into("<H", code, f, (st[w // 8] + base) & 0xFFFF)
+        sites.append(f)
+    return code, sites
+
+
 def deoverlay(name, dgroup_seg):
     exe = dos_addr.Exe(name)
     d = exe.data
@@ -39,12 +70,10 @@ def deoverlay(name, dgroup_seg):
     image.extend(b"\0" * (seg * 16 - len(image)))
     omap = []
     for o in exe.overlays:
-        code = d[o["file"]:o["file"] + o["size"]]
-        fx = d[o["file"] + o["size"]:o["file"] + o["size"] + o["fixups"]]
+        code, sites = fixed_overlay_code(exe, o, 0)   # index x 8 -> image segment; MZ reloc adds load seg
+        fx = sites
         image.extend(code)
-        for (f,) in struct.iter_unpack("<H", fx):
-            if f + 2 > len(code):
-                raise SystemExit(f"overlay {o['idx']}: fixup {f:#x} outside code ({len(code):#x})")
+        for f in sites:
             relocs.append((seg, f))
         stub = o["stub_seg"] * 16                   # image-relative linear
         entries = []
@@ -57,7 +86,7 @@ def deoverlay(name, dgroup_seg):
             relocs.append(((p + 3) >> 4, (p + 3) & 0xF))  # the <seg> word of the far jump
             entries.append(dict(stub=f"{o['stub_seg']:04X}:{ENTRY0 + k * ENTRY_LEN:04X}", target=f"{target:04X}"))
         omap.append(dict(idx=o["idx"], stub_seg=f"{o['stub_seg']:04X}", new_seg=f"{seg:04X}",
-                         file=f"{o['file']:#x}", size=o["size"], fixups=len(fx) // 2, entries=entries))
+                         file=f"{o['file']:#x}", size=o["size"], fixups=len(fx), entries=entries))
         seg += (len(code) + 15) // 16
         image.extend(b"\0" * (seg * 16 - len(image)))
     # new MZ header: same entry/stack/alloc, bigger relocation table and image
