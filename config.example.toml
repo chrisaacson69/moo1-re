@@ -1,2 +1,4 @@
 # Copy to config.toml (gitignored) and point at your MOO1 v1.3 install.
 game_dir = 'C:\Program Files (x86)\Steam\steamapps\common\Master of Orion 1'
+# Optional: Reko CLI (https://github.com/uxmal/reko/releases, CmdLine zip) for tools/reko_run.py
+# reko = 'C:\path	oeko\cli\decompile.exe'

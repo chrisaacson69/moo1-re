@@ -20,6 +20,7 @@ py -3 -m unittest discover -s tests -v
 | `tools/table_sweep.py` | Runs that check over **every** hard-coded integer table in 1oom → `notes/table-sweep.md` (generated; regenerate, don't edit). |
 | `tools/struct_sweep.py` | Same for 1oom's **struct** tables (ship tech, monsters, start ships): enums/`#define`s resolved from 1oom's headers, records located by constant **stride**, sliding-window fallback when the original layout differs → `notes/struct-sweep.md` (generated). |
 | `tools/disasm.py <exe> <root|N> <off> [n]` | Capstone 16-bit disassembly by module offset (root image or overlay N); `--grep` operand search. STARMAP DGROUP = image seg 0x326B. |
+| `tools/reko_run.py <EXE>` | Runs the [Reko](https://github.com/uxmal/reko) decompiler (CLI 0.12.5; path in `config.toml`) on the root module, auto-skipping procedures that abort Reko's global data-flow pass → typed C in `work/reko/` (gitignored). STARMAP: 593 procedures, all typed, 2 skipped. Trust its control flow/constants, not its types. Root only — overlays not loaded yet. |
 | `tools/fetch_refs.py` | 1oom pinned (GitHub → GitLab fallback, source-identical equivalent accepted) + full-history offline bundle `refs/1oom.bundle`; zappatic JSON. |
 | `tools/dos_addr.py map\|where\|root\|live` | DOSBox runtime address ↔ EXE file offset: MZ root formula + Borland FBOV overlay table. `live` reads a running DOSBox (read-only) and verifies the formula against every relocation, the table-sweep hits and the resident overlays → `notes/dos-address-join.md`. |
 
@@ -53,6 +54,12 @@ py -3 -m unittest discover -s tests -v
   `tbl_monster` and `tbl_startship` are ABSENT — expected: 1oom's monster table is a derived
   ("parsed") battle form, start ships are built from enums/names.
 
+- **Reko on STARMAP's root (2026-10-17):** identifies the **Borland C v3 runtime**; 593 procedures with
+  a call graph. Two procedures crash Reko 0.12.5 (`fn1124_2BAE` — boundless SSA recursion on `ss`,
+  which otherwise aborts typing for the whole program; `fn37EE_00C3` — structuring) and are skipped.
+  Its C for the AI-weights routine (`fn1B75_000B`) matches 1oom's structure line for line and again
+  shows eco read from column 3 — a third independent reading (bytes → Capstone → Reko).
+
 Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gaming/moo1/`).
 
 ## Next
@@ -61,5 +68,7 @@ Write-ups and the stream/OSG/1oom cross-checks live in the vault (`research/gami
   constant-stride table in either EXE (a 6,000…10,000 hit was Huge-hull computer costs) — likely computed or
   LBX-held; needs code or a runtime read on known difficulties.
 - What do the AI table's extra columns (4, 11–14) drive?
+- Overlay splitter → feed the 25 FBOV overlays to Reko (needs fixups resolved against the root).
+- Function map: pair Reko's 593 root procedures (+ overlays) with 1oom functions → coverage %.
 - More fixtures across turns/events; decode the events block and diplomacy fields on real saves.
 - Map the DOSBox load segment ↔ Ghidra delta for STARMAP.EXE (`method/data-first-re.md`, open question).
